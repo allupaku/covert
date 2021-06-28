@@ -1,0 +1,48 @@
+- name: "Blocker configuration"
+  hosts: localhost
+  become: yes
+  tasks:
+    - name: Get existing iptables rules
+      command: iptables -n -L
+      changed_when: false
+      register: iptables_rules
+    - name: Create custom iptables chain
+      command: iptables -N RATELIMIT
+      when: "'Chain RATELIMIT' not in iptables_rules.stdout"
+    - name: Flush custom iptable chain
+      command: iptables -F
+    - name: Delete custom iptable chain
+      command: iptables -X RATELIMIT
+      when: "'Chain RATELIMIT' in iptables_rules.stdout and delete is defined"
+    - set_fact:
+        object_state: "present"
+      when: "delete is not defined"
+    - set_fact:
+        object_state: "absent"
+      when: "delete is defined"
+    - name: Route packets to RATELIMIT Chain
+      ansible.builtin.iptables:
+        state: "{{object_state}}"
+        chain: "INPUT"
+        protocol: "tcp"
+        syn: "match"
+        jump: "RATELIMIT"
+      when: "delete is not defined"
+
+    - name: Ratelimit rule RATELIMIT Chain
+      command: "iptables --append RATELIMIT --match hashlimit --hashlimit-mode srcip --hashlimit-upto 1/sec --hashlimit-burst 5 --hashlimit-name conn_rate_limit --jump ACCEPT"
+#      ansible.builtin.iptables:
+#        state: "{{object_state}}"
+#        chain: "RATELIMIT"
+#        match: "hashlimit"
+#        limit: "1/s"
+#        limit_burst: "5"
+#        match_set: "srcip"
+#        jump: "ACCEPT"
+      when: "delete is not defined"
+    - name: Drop packets in RATELIMIT Chain
+      ansible.builtin.iptables:
+        state: "{{object_state}}"
+        chain: "RATELIMIT"
+        jump: "DROP"
+      when: "delete is not defined"
